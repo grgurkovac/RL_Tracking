@@ -87,17 +87,17 @@ class RLT:
     def reccurent_network(self, tensor):
 
         lstm_size = 8
-        time_steps_tensors = tf.expand_dims(tensor, 0).shape # shape is (1, time_steps, observation_size)
-        # time_steps_tensors = tf.split(tensor, self.time_steps, axis=0)
+        # time_steps_tensorst  = tf.expand_dims(tensor, 0).shape # shape is (1, time_steps, observation_size)
+        time_steps_tensors = tf.split(tensor, self.time_steps, axis=0)
 
         def lstm_cell(size):
             return tf.contrib.rnn.BasicLSTMCell(size)
 
         stacked_lstm = tf.contrib.rnn.MultiRNNCell([lstm_cell(s) for s in [100,50,10,8]])
-        outputs, states = tf.nn.dynamic_rnn(stacked_lstm, time_steps_tensors,  dtype=tf.float32)
+        # outputs, states = tf.nn.dynamic_rnn(stacked_lstm, time_steps_tensors,  dtype=tf.float32)
 
         # lstm = tf.contrib.rnn.BasicLSTMCell(lstm_size)
-        # outputs, states = tf.nn.static_rnn(lstm, time_steps_tensors,  dtype=tf.float32)
+        outputs, states = tf.nn.static_rnn(stacked_lstm, time_steps_tensors,  dtype=tf.float32)
 
         outputs = tf.concat(
             outputs,
