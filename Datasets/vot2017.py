@@ -10,10 +10,11 @@ from Datasets.Dataset import *
 
 class VOT2017(Dataset):
 
-    def __init__(self, *args, test_split="test_ants_list.txt", train_split="train_list2.txt", **kwargs):
+    def __init__(self, *args, test_split="test_list2.txt", train_split="train_list2.txt", **kwargs):
         super().__init__(*args, **kwargs)
 
         self.action_dim = 8
+        self.max_time_steps = 1500  # longest video
 
         self.train_dict = dict()
         self.train_dict["next_video_index"] = 0
@@ -73,6 +74,7 @@ class VOT2017(Dataset):
         dots_count = D["video_annots"].shape[-1]//2
 
         D["frame_dimensions"] = np.tile(np.array([D["frame_width"], D["frame_height"]]), [dots_count])
+        D["video_annots"] /= D["frame_dimensions"]
 
 
     def get_train_set(self):
@@ -80,6 +82,33 @@ class VOT2017(Dataset):
 
     def get_test_set(self):
         pass
+
+    def get_next_video_frames_and_annots(self, test):
+        D = self.test_dict if test else self.train_dict
+
+        # todo: use np.save/np.load
+
+        # load frames
+        frames = D["video_frames"]
+
+        # load annots
+        annots = D["video_annots"]
+
+        self.load_next_video(test=test)
+
+        return (frames, annots)
+
+    def pad_video(self, frames, annots, time_steps):
+        n = list(frames.shape)[0]
+        roof_n = int(np.ceil(n / time_steps) * time_steps) # first bigger time_steps
+
+        pad_size = roof_n-n
+        padded_frames = np.pad(frames, [(0,pad_size), (0,0), (0,0), (0,0)], 'constant', constant_values=(0,))
+        padded_annots = np.pad(annots, [(0,pad_size), (0,0)], 'constant', constant_values=(0,))
+
+        return padded_frames, padded_annots, pad_size
+
+
 
     def get_n_frames_and_annots(self, n, test):
 
@@ -96,8 +125,6 @@ class VOT2017(Dataset):
         annots = D["video_annots"][D["next_frame_index"]:D["next_frame_index"]+n]
         D["next_frame_index"] = (D["next_frame_index"] + n) % D["video_frames_count"]
 
-
-        annots /= D["frame_dimensions"]
 
         if load_next_vid:
             self.load_next_video(test=test)
@@ -128,10 +155,11 @@ class VOT2017(Dataset):
         # coordinates = list(map(lambda an: np.squeeze(an), np.split(coordinates, axis=0, indices_or_sections=coordinates.shape[0])))
 
         winname = "test"
-
+        ndots = coordinates.shape[-1]//2
+        scaler = np.tile(np.array([frames.shape[2], frames.shape[1]]), [ndots])
         for i in range(len(frames)):
             frame = frames[i]
-            anot = coordinates[i]*frame.shape[0] # skaliraj nazad
+            anot = coordinates[i]*scaler
 
             dots = np.array(
                 list(zip(
