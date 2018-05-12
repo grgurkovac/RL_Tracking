@@ -29,46 +29,6 @@ class Trainer():
         self.max_time_steps = max_time_steps
         self.batch_size = batch_size
 
-        self.epoch = tf.placeholder(tf.float32, name="epoch")
-
-        self.gt_annots_ph = tf.placeholder(shape=[self.time_steps, self.dataset.action_dim], dtype=tf.float32, name="gt_annots")
-        self.advantages = self.calculate_advantages(self.model.sampled_actions, self.gt_annots_ph)
-
-        # self.advantages_ph = tf.placeholder(shape=[self.batch_size, self.time_steps], dtype=tf.float32, name="advantages")
-
-
-        with tf.variable_scope("sq_loss"):
-            self.sq_loss = tf.reduce_sum((self.model.means-self.gt_annots_ph)**2) # just for display
-            tf.summary.scalar("sq_loss:", self.sq_loss)
-
-        with tf.variable_scope("pseudo_loss"):
-            self.pseudo_loss = (1.0/self.batch_size)*tf.reduce_sum(
-                self.model.calculate_log_probs()*
-                tf.stop_gradient(self.advantages)
-            )
-
-        self.global_step = tf.Variable(0, trainable=False)
-        starter_learning_rate = 0.0001
-        self.learning_rate = tf.train.exponential_decay(starter_learning_rate, self.global_step, decay_steps=70, decay_rate=0.99)
-
-        with tf.control_dependencies(tf.get_collection("assert_ops")):
-            self.optimize_step = tf.train.AdamOptimizer(self.learning_rate).minimize(-self.pseudo_loss, global_step=self.global_step)  # maximise
-            # self.optimize_step = tf.train.AdamOptimizer(self.learning_rate).minimize(self.sq_loss, global_step=self.global_step)  # maximise
-
-
-        self.experiment_name = experiment_name
-        self.experiment_dir=os.path.abspath(os.path.join("./",experiment_name))
-        self.checkpoint_dir=os.path.abspath(os.path.join("./",experiment_name,"checkpoint/"))
-
-        self.train_dir = '/'.join([self.experiment_dir,"summaries/train"])
-        self.train_writer = tf.summary.FileWriter(self.train_dir)
-        # self.train_writer.add_graph(graph=tf.get_default_graph())
-
-        self.test_dir = '/'.join([self.experiment_dir,"summaries/test"])
-        self.test_writer = tf.summary.FileWriter(self.test_dir)
-        self.merged = tf.summary.merge_all()
-
-        self.saver = tf.train.Saver()
 
         # compare: baseline, normalized advantages (advangtages (rtg), advantages diminished (rtg))
 
@@ -80,9 +40,9 @@ class Trainer():
         latest_checkpint_path = tf.train.latest_checkpoint(self.checkpoint_dir)
 
         if latest_checkpint_path and input("load " + latest_checkpint_path + " ? y/n ") == "y":
-                print("Loading")
-                self.saver.restore(session, latest_checkpint_path)
-                begin_step = self.global_step.eval(session=session)
+            print("Loading")
+            self.saver.restore(session, latest_checkpint_path)
+            begin_step = self.global_step.eval(session=session)
 
         else:
 
@@ -119,7 +79,7 @@ class Trainer():
         with tf.Session(config=config).as_default() as sess:
             self.load_or_initialize(sess)
 
-            for j in range(10000):
+            for j in True:
                 print("j:", j)
                 print("epoch:", self.dataset.epoch)
 
@@ -158,10 +118,10 @@ class Trainer():
                         ]+list(self.model.last_states),
                         feed_dict={
                             **{
-                            self.model.frames_ph: train_frames_chunk,
-                            self.model.input_annot_ph: train_input_annot_chunk,
-                            self.gt_annots_ph: train_annots_chunk,
-                            self.epoch: self.dataset.epoch,
+                                self.model.frames_ph: train_frames_chunk,
+                                self.model.input_annot_ph: train_input_annot_chunk,
+                                self.gt_annots_ph: train_annots_chunk,
+                                self.epoch: self.dataset.epoch,
                             },
                             **dict(zip(self.model.init_state_placeholders, init_states))
                         }
@@ -319,17 +279,9 @@ class Trainer():
 
 if __name__ == "__main__":
 
-    if len(sys.argv) > 1:
-        experiment_name = sys.argv[1]
-    else:
-        experiment_name = "test_exp_full_train_set"
-
     dataset = VOT2017("./Datasets/vot2017/")
     time_steps = 10
-    max_time_steps = 1500 # longest video in the dataset (girl)
-    # time_steps= 10
     batch_size = 5
-    model = RLT(max_time_steps=max_time_steps, time_steps=time_steps, batch_size=batch_size)
-    trainer = Trainer(dataset, model, batch_size=batch_size, time_steps=time_steps, max_time_steps=max_time_steps, experiment_name=experiment_name)
+    frames, annots = dataset.get_next_video_frames_and_annots(test=False)
+    dataset.animate(frames, annots)
 
-    trainer.train()

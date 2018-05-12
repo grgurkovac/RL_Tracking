@@ -10,11 +10,12 @@ from Datasets.Dataset import *
 
 class VOT2017(Dataset):
 
-    def __init__(self, *args, test_split="test_list2.txt", train_split="train_list2.txt", **kwargs):
+    def __init__(self, *args, test_split="test_list2.txt", train_split="train_list_filtered.txt", **kwargs):
         super().__init__(*args, **kwargs)
 
         self.action_dim = 8
         self.max_time_steps = 1500  # longest video
+        self.epoch = 0
 
         self.train_dict = dict()
         self.train_dict["next_video_index"] = 0
@@ -56,6 +57,7 @@ class VOT2017(Dataset):
             if filename.endswith(".jpg"):
                 img_path = os.path.join(directory, filename)
                 train_video_frames_list.append([ndimage.imread(img_path)])
+        print("listed")
 
         train_video_annots_list = []
         gt_path = os.path.join(self.path, D["video"], "groundtruth.txt")
@@ -64,6 +66,7 @@ class VOT2017(Dataset):
             train_video_annots_list.append(np.array([line.rstrip().split(',')], dtype=np.float32))
 
         D["video_frames"] = np.concatenate(train_video_frames_list)
+        print("concatendated")
         D["video_annots"] = np.concatenate(train_video_annots_list)
         D["next_frame_index"] = 0
 
@@ -98,15 +101,16 @@ class VOT2017(Dataset):
 
         return (frames, annots)
 
-    def pad_video(self, frames, annots, time_steps):
+    def pad_video(self, frames, annots, input_annot, time_steps):
         n = list(frames.shape)[0]
-        roof_n = int(np.ceil(n / time_steps) * time_steps) # first bigger time_steps
+        roof_n = int(np.ceil(n / time_steps) * time_steps)  # first bigger time_steps
 
         pad_size = roof_n-n
-        padded_frames = np.pad(frames, [(0,pad_size), (0,0), (0,0), (0,0)], 'constant', constant_values=(0,))
-        padded_annots = np.pad(annots, [(0,pad_size), (0,0)], 'constant', constant_values=(0,))
+        padded_frames = np.pad(frames, [(0, pad_size), (0, 0), (0, 0), (0, 0)], 'constant', constant_values=(0,))
+        padded_annots = np.pad(annots, [(0, pad_size), (0, 0)], 'constant', constant_values=(0,))
+        padded_input_annot = np.pad(input_annot, [(0, pad_size), (0, 0)], 'constant', constant_values=(0,))
 
-        return padded_frames, padded_annots, pad_size
+        return padded_frames, padded_annots, padded_input_annot, pad_size
 
 
 
@@ -144,9 +148,13 @@ class VOT2017(Dataset):
         self.load_frames_and_annots_for_video(test=test)
         D["video_frames_count"] = len(D["video_annots"])
 
+        if not test and D["next_video_index"] == 0:
+            self.epoch += 1
+            print("New Epoch: ", self.epoch)
+
         D["next_video_index"] = (D["next_video_index"] + 1) % D["videos_count"]
 
-        print("Loaded next test="+str(test) +" video: ", D["video"])
+        print("Loaded next {} ".format("test" if test else "train") +" video: ", D["video"])
 
 
     def animate(self, frames, coordinates, ground_truth=False):

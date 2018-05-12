@@ -75,9 +75,9 @@ class RLT:
     def observation_network(self, tensor):
         with tf.variable_scope("Observation_network"):
 
-            def YOLO_extractor(tensor, darkflow_dir=r"/home/grg/Documents/FER/8.semestar/Seminar/darkflow"):
+            def YOLO_extractor(tensor):
 
-                def build_from_pb(protobuf_file=r"/home/grg/Documents/FER/8.semestar/Seminar/darkflow/built_graph/yolov2-tiny-voc.pb"):
+                def build_from_pb(protobuf_file=r"./yolo/yolov2-tiny-voc.pb"):
                     with tf.gfile.FastGFile(protobuf_file, "rb") as f:
 
                         graph_def = tf.GraphDef()
@@ -104,36 +104,6 @@ class RLT:
                     output = op.outputs[0]
 
                     return inp, output
-
-                    # self.setup_meta_ops()
-
-                # import os
-                # import sys
-                #
-                # real_cwd = os.getcwd()
-                # os.chdir(darkflow_dir)
-                # sys.path.insert(0, darkflow_dir)
-                #
-                # from darkflow.net.build import TFNet
-                # options = {
-                #     "model": "./cfg/v1/yolo-tiny.cfg",
-                #     "load": "./bin/yolo-tiny.weights",
-                #     "threshold": 0.1
-                # }
-                #
-                # yolo = TFNet(options)
-                # os.chdir(real_cwd)
-                #
-                # # connect graph_def
-                #
-                # self.frames_ph = yolo.inp
-                #
-                # ops = [op.name for op in yolo.sess.graph.get_operations() if "leaky" in op.name]
-                # last_leaky = ops[-1]
-                #
-                # op_dict = {op.name: op for op in yolo.sess.graph.get_operations() if "leaky" in op.name}
-                # op = op_dict[last_leaky]
-                # output = op.outputs[0]
 
                 inp, out = build_from_pb()
                 self.frames_ph = inp
@@ -188,17 +158,6 @@ class RLT:
             # outputs = tf.Print(outputs, [tf.gradients(outputs, time_steps_tensors)], message="rec_grads:")
             outputs= tf.squeeze(outputs) # one video for now
             outputs = outputs[:, -8:]
-
-            # def parse(dots):
-            #     # ne radi bolje ovako, trebalo bi dodati rotaciju pa probati tako
-            #     dot, w, h, = tf.split(dots, [2, 1, 1], axis=1)
-            #     dotu = dot + tf.concat((tf.zeros_like(h),h), axis=1)
-            #     dotr = dot + tf.concat((w,tf.zeros_like(w)), axis=1)
-            #     dotur = dot + tf.concat((w,h), axis=1)
-            #     dots = tf.concat((dot, dotu, dotur, dotr), axis=1)
-            #     return dot
-
-            # outputs = parse(outputs)
 
             assert_op = tf.assert_equal(tf.shape(outputs), [self.time_steps, 8], data=[tf.shape(outputs)], summarize=4)
             tf.add_to_collection("assert_ops", assert_op)
