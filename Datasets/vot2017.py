@@ -4,17 +4,23 @@ import cv2
 import os
 from scipy import ndimage
 from functools import lru_cache
+from random import shuffle
+import pickle
 
-from Datasets.Dataset import *
 
 
-class VOT2017(Dataset):
+class VOT2017:
 
-    def __init__(self, *args, test_split="test_list2.txt", train_split="train_list_filtered.txt", **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, train_split="OTB50.txt", test_split="Dudek.txt", path="./Datasets/OTB50/"):
+        self.path = path
 
-        self.action_dim = 8
-        self.max_time_steps = 1500  # longest video
+        self.train_video_index = -1
+        self.test_video_index = -1
+
+        self.train_next_frame_index = 0
+        self.test_next_frame_index = 0
+
+        self.action_dim = 4
         self.epoch = 0
 
         self.train_dict = dict()
@@ -24,6 +30,7 @@ class VOT2017(Dataset):
         self.test_dict = dict()
         self.test_dict["next_video_index"] = 0
         self.test_dict["split"] = test_split
+
 
         self.load_videos_list()
 
@@ -50,32 +57,56 @@ class VOT2017(Dataset):
 
         D = self.test_dict if test else self.train_dict
 
-        train_video_frames_list = []
-        directory = os.path.join(self.path, D["video"])
-
-        for filename in sorted(os.listdir(directory)):
-            if filename.endswith(".jpg"):
-                img_path = os.path.join(directory, filename)
-                train_video_frames_list.append([ndimage.imread(img_path)])
-        print("listed")
+        gt_path = os.path.join(self.path, D["video"], "groundtruth_rect.txt")
 
         train_video_annots_list = []
-        gt_path = os.path.join(self.path, D["video"], "groundtruth.txt")
 
-        for line in open(gt_path):
-            train_video_annots_list.append(np.array([line.rstrip().split(',')], dtype=np.float32))
+        for i, line in enumerate(open(gt_path)):
+            if "," in line:
+                train_video_annots_list.append(np.array(line.rstrip().split(','), dtype=np.float32))
+            elif "\t" in line:
+                train_video_annots_list.append(np.array(line.rstrip().split('\t'), dtype=np.float32))
+            else:
+                raise ValueError("I don't know how to parse this. {}".format(line))
 
-        D["video_frames"] = np.concatenate(train_video_frames_list)
-        print("concatendated")
-        D["video_annots"] = np.concatenate(train_video_annots_list)
+
+        # annots = np.concatenate(train_video_annots_list)
+        D["video_annots"] = train_video_annots_list
+
+        directory = os.path.join(self.path, D["video"])
+        pickle_path = os.path.join(directory,"frames.picke")
+
+        if os.path.isfile(pickle_path):
+            with open(pickle_path, "rb") as f:
+                train_video_frames_list = pickle.load(f)
+
+        else:
+
+            train_video_frames_list = []
+
+            for i, filename in enumerate(sorted(os.listdir(directory))):
+                if filename.endswith(".jpg"):
+                    img_path = os.path.join(directory, filename)
+                    train_video_frames_list.append(ndimage.imread(img_path))
+
+            with open(pickle_path, "wb") as f:
+                pickle.dump(train_video_frames_list, f)
+
+
+        assert len(train_video_annots_list) == len(train_video_frames_list)
+
+        # D["video_frames"] = np.concatenate(train_video_frames_list)
+        D["video_frames"] = train_video_frames_list
+
+
         D["next_frame_index"] = 0
 
-        D["frame_height"] = D["video_frames"].shape[1]
-        D["frame_width"] = D["video_frames"].shape[2]
+        first_img = D["video_frames"][0]
+        D["frame_height"] = first_img.shape[0]
+        D["frame_width"] = first_img.shape[1]
 
-
-        dots_count = D["video_annots"].shape[-1]//2
-
+        first_anot = D["video_annots"][0]
+        dots_count = len(first_anot)//2
         D["frame_dimensions"] = np.tile(np.array([D["frame_width"], D["frame_height"]]), [dots_count])
         D["video_annots"] /= D["frame_dimensions"]
 
@@ -89,8 +120,6 @@ class VOT2017(Dataset):
     def get_next_video_frames_and_annots(self, test):
         D = self.test_dict if test else self.train_dict
 
-        # todo: use np.save/np.load
-
         # load frames
         frames = D["video_frames"]
 
@@ -99,9 +128,12 @@ class VOT2017(Dataset):
 
         self.load_next_video(test=test)
 
+        assert len(frames) == len(annots)
+
         return (frames, annots)
 
     def pad_video(self, frames, annots, input_annot, time_steps):
+        assert frames.shape[0] == annots.shape[0] == input_annot.shape[0]
         n = list(frames.shape)[0]
         roof_n = int(np.ceil(n / time_steps) * time_steps)  # first bigger time_steps
 
@@ -151,10 +183,11 @@ class VOT2017(Dataset):
         if not test and D["next_video_index"] == 0:
             self.epoch += 1
             print("New Epoch: ", self.epoch)
+            shuffle(D["videos_list"])
 
         D["next_video_index"] = (D["next_video_index"] + 1) % D["videos_count"]
 
-        print("Loaded next {} ".format("test" if test else "train") +" video: ", D["video"])
+        print("Loaded next {}".format("test" if test else "train") +" video: ", D["video"])
 
 
     def animate(self, frames, coordinates, ground_truth=False):
