@@ -1,22 +1,24 @@
 import tensorflow as tf
 import numpy as np
+import cv2
 
 class RLT:
 
-    def __init__(self, batch_size, observation_size=1000, annotation_size=8, time_steps=None, max_time_steps=None):
+    def __init__(self, batch_size, observation_size=5000, annotation_size=4, time_steps=None, max_time_steps=None):
 
         self.time_steps = time_steps
         self.max_time_steps = time_steps
         self.batch_size = batch_size
-        self.lstm_sizes = [2000, 1000]
+        self.lstm_sizes = [5000]
 
+        self.input_sizes = (448, 448)  # this yolo model
 
         self.observation_size = observation_size
-        self.annotations_size = annotation_size
+        self.annotation_size = annotation_size
 
         self.frames_ph = tf.placeholder(dtype=tf.float32, shape=(self.time_steps, None, None, 3), name="frames")
-        self.input_annot_ph = tf.placeholder(dtype=tf.float32, shape=(self.time_steps, 8), name="input_annot")
-        self.sampled_actions_ph = tf.placeholder(dtype=tf.float32, shape=(None, None, 8), name="sampled_actions")
+        self.input_annot_ph = tf.placeholder(dtype=tf.float32, shape=(self.time_steps, self.annotation_size), name="input_annot")
+        self.sampled_actions_ph = tf.placeholder(dtype=tf.float32, shape=(None, None, self.annotation_size), name="sampled_actions")
 
         # forward_pass
         self.observation = self.observation_network(self.frames_ph)
@@ -26,6 +28,21 @@ class RLT:
 
         # self.means = tf.Print(self.means, [tf.gradients(self.means, self.observation)], message="observation")
 
+    def resize_inputs(self, ims):
+
+        def resize_input(im):
+            # h, w, c = self.meta['inp_size']
+            if len(im.shape) == 2:
+                # greyscale image
+                im = np.expand_dims(im, axis=4) # add last dim
+                im = np.repeat(im, 3, axis=-1)  # convert to rgb
+
+            imsz = cv2.resize(im, self.input_sizes)  # 448 for this model of yolo
+            imsz = np.reshape(imsz, [*self.input_sizes, 3])
+            return imsz
+
+        resized = [resize_input(im) for im in ims]
+        return resized
 
 
     def fake_roi_pooling(self, tensor, output_dims=(8, 8)):
@@ -77,7 +94,8 @@ class RLT:
 
             def YOLO_extractor(tensor):
 
-                def build_from_pb(protobuf_file=r"./yolo/yolov2-tiny-voc.pb"):
+                # def build_from_pb(protobuf_file=r"./yolo/yolov2-tiny-voc.pb"):
+                def build_from_pb(protobuf_file=r"./yolo/yolo-full.pb"):
                     with tf.gfile.FastGFile(protobuf_file, "rb") as f:
 
                         graph_def = tf.GraphDef()
@@ -96,7 +114,7 @@ class RLT:
                     out = tf.get_default_graph().get_tensor_by_name('output:0')
 
                     ops = [op.name for op in tf.get_default_graph().get_operations() if "leaky" in op.name]
-                    last_leaky = ops[-2]
+                    last_leaky = ops[-1]
                     print("ll:", last_leaky)
 
                     op_dict = {op.name: op for op in tf.get_default_graph().get_operations() if "leaky" in op.name}
@@ -122,10 +140,10 @@ class RLT:
             tensor = YOLO_extractor(tensor=tensor)
             tensor = tf.layers.flatten(tensor)
 
-            tensor = tf.stop_gradient(tensor) # dont train yolo
+            tensor = tf.stop_gradient(tensor)  # do not train yolo
 
             tensor = tf.concat([tensor, self.input_annot_ph], axis=-1)
-            obs = tf.layers.dense(tensor, self.observation_size-self.annotations_size)
+            obs = tf.layers.dense(tensor, self.observation_size-self.annotation_size)
 
             return obs
 
@@ -139,27 +157,17 @@ class RLT:
             def lstm_cell(size):
                 return tf.contrib.rnn.BasicLSTMCell(size)
 
-            # self.init_state_placeholders = [tf.placeholder(tf.float32, [2, 1, s]) for s in [50,50,10,8]]
             self.init_state_placeholders = [tf.placeholder(tf.float32, [2, 1, s]) for s in self.lstm_sizes]
 
             init_states = tuple([tf.nn.rnn_cell.LSTMStateTuple(state_ph[0], state_ph[1]) for state_ph in self.init_state_placeholders])
 
-            # stacked_lstm = tf.contrib.rnn.MultiRNNCell([lstm_cell(s) for s in [50,50,10,8]])
             stacked_lstm = tf.contrib.rnn.MultiRNNCell([lstm_cell(s) for s in self.lstm_sizes])
             outputs, self.last_states = tf.nn.dynamic_rnn(stacked_lstm, time_steps_tensors, initial_state=init_states, dtype=tf.float32)
 
-            # lstm = tf.contrib.rnn.BasicLSTMCell(lstm_size)
-            # outputs, states = tf.nn.static_rnn(stacked_lstm, time_steps_tensors,  dtype=tf.float32)
+            outputs = tf.squeeze(outputs) # one video for now
+            outputs = outputs[:, -self.annotation_size:]
 
-            # outputs = tf.concat(
-            #     outputs,
-            #     axis=0
-            # )
-            # outputs = tf.Print(outputs, [tf.gradients(outputs, time_steps_tensors)], message="rec_grads:")
-            outputs= tf.squeeze(outputs) # one video for now
-            outputs = outputs[:, -8:]
-
-            assert_op = tf.assert_equal(tf.shape(outputs), [self.time_steps, 8], data=[tf.shape(outputs)], summarize=4)
+            assert_op = tf.assert_equal(tf.shape(outputs), [self.time_steps, self.annotation_size], data=[tf.shape(outputs)], summarize=self.annotation_size)
             tf.add_to_collection("assert_ops", assert_op)
 
             return outputs
@@ -168,7 +176,7 @@ class RLT:
     def sample_actions(self, means, N):
         # create N random episodes, based on means
         Z = tf.random_uniform(shape=[N, means.shape[0].value, means.shape[1].value]) - 0.5 # N samples
-        self.sigmas = tf.get_variable(name="sigmas", shape=self.annotations_size, initializer=tf.constant_initializer(0.001), trainable=False)
+        self.sigmas = tf.get_variable(name="sigmas", shape=self.annotation_size, initializer=tf.constant_initializer(0.001), trainable=False)
         actions = means + Z*(self.sigmas)**2
         return actions
 

@@ -61,7 +61,14 @@ class VOT2017:
 
         train_video_annots_list = []
 
+        num_lines = sum(1 for line in open(gt_path))
+
         for i, line in enumerate(open(gt_path)):
+
+            if i == num_lines // 3:
+                # only read the first third of the sequence
+                break
+
             if "," in line:
                 train_video_annots_list.append(np.array(line.rstrip().split(','), dtype=np.float32))
             elif "\t" in line:
@@ -74,7 +81,7 @@ class VOT2017:
         D["video_annots"] = train_video_annots_list
 
         directory = os.path.join(self.path, D["video"])
-        pickle_path = os.path.join(directory,"frames.picke")
+        pickle_path = os.path.join(directory, "frames_third.pickle")
 
         if os.path.isfile(pickle_path):
             with open(pickle_path, "rb") as f:
@@ -85,6 +92,11 @@ class VOT2017:
             train_video_frames_list = []
 
             for i, filename in enumerate(sorted(os.listdir(directory))):
+
+                if i == num_lines // 3:
+                    # only read the first third of the sequence
+                    break
+
                 if filename.endswith(".jpg"):
                     img_path = os.path.join(directory, filename)
                     train_video_frames_list.append(ndimage.imread(img_path))
@@ -132,6 +144,7 @@ class VOT2017:
 
         return (frames, annots)
 
+
     def pad_video(self, frames, annots, input_annot, time_steps):
         assert frames.shape[0] == annots.shape[0] == input_annot.shape[0]
         n = list(frames.shape)[0]
@@ -152,10 +165,10 @@ class VOT2017:
 
         if D["next_frame_index"]+n > D["video_frames_count"]:
             n = D["video_frames_count"] - D["next_frame_index"]
-            load_next_vid=True
+            load_next_vid = True
 
         else:
-            load_next_vid=False
+            load_next_vid = False
 
         frames = D["video_frames"][D["next_frame_index"]:D["next_frame_index"]+n]
         annots = D["video_annots"][D["next_frame_index"]:D["next_frame_index"]+n]
@@ -217,7 +230,7 @@ class VOT2017:
             else:
                 color=(255, 0, 0)
 
-            cv2.polylines(frame, np.int32([dots]), 1, color=color, thickness=2)
+            cv2.circle(frame, np.int32([dots]), 1, color=color, thickness=2)
 
             cv2.imshow(winname, frame)
             cv2.waitKey(0)

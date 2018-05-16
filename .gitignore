@@ -1,5 +1,8 @@
 __pycache__/*
 Datasets/__pycache__/*
 Datasets/vot2017/*
+Datasets/OTB50/*
+experiments/*
 .idea/*
 test/*
+yolo/*
