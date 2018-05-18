@@ -6,3 +6,4 @@ experiments/*
 .idea/*
 test/*
 yolo/*
+.ipynb_checkpoints/*

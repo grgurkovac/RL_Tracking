@@ -3,7 +3,7 @@ import numpy as np
 import shutil
 from functools import lru_cache
 import psutil
-from Datasets.vot2017 import VOT2017
+from Datasets.dataset import Dataset
 import sys
 from RLT_model import *
 import os
@@ -18,6 +18,19 @@ def centralize(data):
     mean, _ = tf.nn.moments(data, axes=[0])
     c_data = (data - mean)
     return c_data
+
+def center_distance(R1, R2):
+    x11, y11, w1, h1 = tf.split(R1, 4, axis=1)
+    x1c, y1c = x11 + w1//2, y11 + h1//2
+
+    x21, y21, w2, h2 = tf.split(R2, 4, axis=1)
+    x2c, y2c = x21 + w2//2, y21 + h2//2
+
+    C1 = tf.concat((x1c, y1c), axis=1)
+    C2 = tf.concat((x2c, y2c), axis=1)
+
+    return tf.reduce_mean(tf.abs(C1-C2))
+
 
 def IOU(R1, R2):
 
@@ -40,23 +53,6 @@ def IOU(R1, R2):
 
     intersection = wI * hI
     union = (w1 * h1 + w2 * h2) - intersection
-
-    # union = tf.Print(union, [x12], summarize=1, message="x12:")
-    # union = tf.Print(union, [y12], summarize=1, message="y12:")
-    # union = tf.Print(union, [x22], summarize=1, message="x22:")
-    # union = tf.Print(union, [y22], summarize=1, message="y22:")
-    #
-    # union = tf.Print(union, [xI1], summarize=1, message="xI1:")
-    # union = tf.Print(union, [xI2], summarize=1, message="xI2:")
-    #
-    # union = tf.Print(union, [yI1], summarize=1, message="yI1:")
-    # union = tf.Print(union, [yI2], summarize=1, message="yI2:")
-    #
-    # union = tf.Print(union, [wI], summarize=1, message="wI:")
-    # union = tf.Print(union, [hI], summarize=1, message="hI:")
-    #
-    # union = tf.Print(union, [union], summarize=1, message="Union:")
-    # union = tf.Print(union, [intersection], summarize=1, message="Intersection:")
 
     IOU = intersection / union
 
@@ -85,10 +81,13 @@ class Trainer():
 
 
         with tf.variable_scope("sq_loss"):
-            self.sq_loss = tf.reduce_sum((self.model.means-self.gt_annots_ph)**2) # just for display
-            # self.sq_loss = tf.Print(self.sq_loss, [self.model.means], message="means", summarize=4)
-            # self.sq_loss = tf.Print(self.sq_loss, [self.gt_annots_ph], message="annots", summarize=4)
+            self.sq_loss = tf.reduce_mean((self.model.means-self.gt_annots_ph)**2)  # just for display
             tf.summary.scalar("sq_loss:", self.sq_loss)
+
+        with tf.variable_scope("center_distance"):
+            self.center_distance = center_distance(self.model.means, self.gt_annots_ph)  # just for display
+            tf.summary.scalar("center_distance:", self.center_distance)
+
 
         with tf.variable_scope("pseudo_loss"):
             self.pseudo_loss = (1.0/self.batch_size)*tf.reduce_sum(
@@ -98,7 +97,8 @@ class Trainer():
 
         self.global_step = tf.Variable(0, trainable=False)
         starter_learning_rate = 0.00001
-        self.learning_rate = tf.maximum(tf.train.exponential_decay(starter_learning_rate, self.global_step, decay_steps=230, decay_rate=0.99), 1e-6)
+        self.learning_rate = tf.maximum(tf.train.exponential_decay(
+            starter_learning_rate, self.global_step, decay_steps=300, decay_rate=0.99, staircase=True), 1e-6)
         tf.summary.scalar("learning rate", self.learning_rate)
 
         with tf.control_dependencies(tf.get_collection("assert_ops")):
@@ -191,11 +191,12 @@ class Trainer():
                     )
 
                     # _, ps_l, sq_l, train_summary, lr, det_actions, global_step_evald, *init_states = sess.run(
-                    _, ps_l, sq_l, lr, det_actions, global_step_evald, *init_states = sess.run(
+                    _, ps_l, sq_l, c_dist, lr, det_actions, global_step_evald, *init_states = sess.run(
                         [
                             self.optimize_step,
                             self.pseudo_loss,
                             self.sq_loss,
+                            self.center_distance,
                             # self.merged,
                             self.learning_rate,
                             self.model.deterministic_actions,
@@ -258,10 +259,11 @@ class Trainer():
                         test_frames_chunk, test_annots_chunk, test_input_annot_chunk, test_padd_size = self.dataset.pad_video(
                             frames=test_frames_chunk, annots=test_annots_chunk, input_annot=test_input_annot_chunk, time_steps=self.time_steps)
 
-                        ps_l, sq_l, test_summary, lr, det_actions, global_step_evald, *init_states = sess.run(
+                        ps_l, sq_l, c_dist, test_summary, lr, det_actions, global_step_evald, *init_states = sess.run(
                             [
                                 self.pseudo_loss,
                                 self.sq_loss,
+                                self.center_distance,
                                 self.merged,
                                 self.learning_rate,
                                 self.model.deterministic_actions,
@@ -305,7 +307,7 @@ class Trainer():
                 return rews
 
 
-            rews = tf.cond(self.epoch < 50, lambda: distance_rewards(sampled_actions, annots), lambda: IOU_rewards(sampled_actions, annots))
+            rews = tf.cond(self.epoch < 100, lambda: distance_rewards(sampled_actions, annots), lambda: IOU_rewards(sampled_actions, annots))
 
             # dr = distance_rewards(sampled_actions, annots)
             # tf.summary.scalar("Dist_rews_mean", tf.reduce_mean(dr))
@@ -378,7 +380,7 @@ if __name__ == "__main__":
     else:
         experiment_name = "test"
 
-    dataset = VOT2017(path="./Datasets/OTB50/")
+    dataset = Dataset(path="./Datasets/OTB50/")
     time_steps = 10
     max_time_steps = 1500  # longest video in the dataset (girl)
     batch_size = 5

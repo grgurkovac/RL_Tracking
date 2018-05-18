@@ -9,9 +9,9 @@ import pickle
 
 
 
-class VOT2017:
+class Dataset:
 
-    def __init__(self, train_split="OTB50.txt", test_split="Dudek.txt", path="./Datasets/OTB50/"):
+    def __init__(self, train_split="OTB50.txt", test_split="test.txt", path="./Datasets/OTB50/"):
         self.path = path
 
         self.train_video_index = -1
@@ -30,7 +30,6 @@ class VOT2017:
         self.test_dict = dict()
         self.test_dict["next_video_index"] = 0
         self.test_dict["split"] = test_split
-
 
         self.load_videos_list()
 
@@ -62,12 +61,10 @@ class VOT2017:
         train_video_annots_list = []
 
         num_lines = sum(1 for line in open(gt_path))
+        third_size = num_lines//3
+
 
         for i, line in enumerate(open(gt_path)):
-
-            if i == num_lines // 3:
-                # only read the first third of the sequence
-                break
 
             if "," in line:
                 train_video_annots_list.append(np.array(line.rstrip().split(','), dtype=np.float32))
@@ -76,12 +73,19 @@ class VOT2017:
             else:
                 raise ValueError("I don't know how to parse this. {}".format(line))
 
+            if not test and len(train_video_annots_list) == third_size:
+                break
+
 
         # annots = np.concatenate(train_video_annots_list)
         D["video_annots"] = train_video_annots_list
 
         directory = os.path.join(self.path, D["video"])
-        pickle_path = os.path.join(directory, "frames_third.pickle")
+
+        if test:
+            pickle_path = os.path.join(directory, "frames_full.pickle")
+        else:
+            pickle_path = os.path.join(directory, "frames_third.pickle")
 
         if os.path.isfile(pickle_path):
             with open(pickle_path, "rb") as f:
@@ -93,13 +97,13 @@ class VOT2017:
 
             for i, filename in enumerate(sorted(os.listdir(directory))):
 
-                if i == num_lines // 3:
-                    # only read the first third of the sequence
-                    break
-
                 if filename.endswith(".jpg"):
+
                     img_path = os.path.join(directory, filename)
                     train_video_frames_list.append(ndimage.imread(img_path))
+
+                    if not test and len(train_video_frames_list) == third_size:
+                        break
 
             with open(pickle_path, "wb") as f:
                 pickle.dump(train_video_frames_list, f)
@@ -242,7 +246,7 @@ class VOT2017:
 
 if __name__ == "__main__":
 
-    dataset = VOT2017("./vot2017/")
+    dataset = Dataset("./vot2017/")
     frames, anots = dataset.get_n_frames_and_annots(10, test=False)
 
     dataset.animate(frames, anots)
