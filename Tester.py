@@ -46,8 +46,8 @@ class Tester():
         self.global_step = tf.Variable(0, trainable=False)
 
         self.experiment_name = experiment_name
-        self.experiment_dir=os.path.abspath(os.path.join("./",experiment_name))
-        self.checkpoint_dir=os.path.abspath(os.path.join("./",experiment_name,"checkpoint/"))
+        self.experiment_dir=os.path.abspath(os.path.join("./", experiment_name))
+        self.checkpoint_dir=os.path.abspath(os.path.join("./", experiment_name, "checkpoint/"))
 
         self.saver = tf.train.Saver()
 

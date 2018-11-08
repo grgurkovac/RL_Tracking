@@ -9,6 +9,8 @@ from RLT_model import *
 import os
 import cv2
 
+ADVANTAGE_CHANGE_EPOCH = 300
+
 def normalize(data, m=0.0, std=1.0):
     mean, var = tf.nn.moments(data, axes=[0])
     n_data = (data - mean) / (var + 1e-8)
@@ -81,7 +83,7 @@ class Trainer():
 
 
         with tf.variable_scope("sq_loss"):
-            self.sq_loss = tf.reduce_mean((self.model.means-self.gt_annots_ph)**2)  # just for display
+            self.sq_loss = tf.reduce_sum(tf.reduce_mean(tf.abs(self.model.means-self.gt_annots_ph), axis=1))  # just for display
             tf.summary.scalar("sq_loss:", self.sq_loss)
 
         with tf.variable_scope("center_distance"):
@@ -98,13 +100,12 @@ class Trainer():
         self.global_step = tf.Variable(0, trainable=False)
         starter_learning_rate = 0.00001
         self.learning_rate = tf.maximum(tf.train.exponential_decay(
-            starter_learning_rate, self.global_step, decay_steps=300, decay_rate=0.99, staircase=True), 1e-6)
+            starter_learning_rate, self.global_step, decay_steps=1800, decay_rate=0.99, staircase=True), 1e-6)
         tf.summary.scalar("learning rate", self.learning_rate)
 
         with tf.control_dependencies(tf.get_collection("assert_ops")):
             self.optimize_step = tf.train.AdamOptimizer(self.learning_rate).minimize(-self.pseudo_loss, global_step=self.global_step)  # maximise
             # self.optimize_step = tf.train.AdamOptimizer(self.learning_rate).minimize(self.sq_loss, global_step=self.global_step)  # maximise
-
 
         self.experiment_name = experiment_name
         self.experiment_dir = os.path.abspath(os.path.join("./experiments/", experiment_name))
@@ -123,7 +124,7 @@ class Trainer():
         # compare: baseline, normalized advantages (advangtages (rtg), advantages diminished (rtg))
 
     def load_or_initialize(self, session):
-        # incijalizacija parametara
+        # parameter initialization
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
@@ -144,23 +145,17 @@ class Trainer():
 
 
     def train(self):
-        # test_frames, test_annots = self.dataset.get_next_video_frames_and_annots(test=True, time_steps=time_steps) # full video
-
-        # test_input_annot = np.zeros_like(test_annots)
-        # test_input_annot[0][0] = test_annots[0][0]
-
 
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
-        config.gpu_options.per_process_gpu_memory_fraction = 0.8
+        config.gpu_options.per_process_gpu_memory_fraction = 0.799
 
-        # train_frames, train_annots = self.dataset.get_next_video_frames_and_annots(test=False)
         with tf.Session(config=config).as_default() as sess:
             self.load_or_initialize(sess)
 
-            for j in range(10000):
+            for j in range(1000000):
                 print("j:", j)
-                print("epoch:", self.dataset.epoch)
+                print("epoch:", 397+self.dataset.epoch)
 
                 train_frames, train_annots = self.dataset.get_next_video_frames_and_annots(test=False)
                 train_frames = self.model.resize_inputs(train_frames)
@@ -174,7 +169,7 @@ class Trainer():
                 train_frames_count = len(train_frames)
                 # train_true_video_len = train_frames_count-train_padd_size
                 train_true_video_len = train_frames_count
-                chunk_loss = 0
+                train_chunk_loss = 0
                 init_states = [np.zeros([2, 1, s]) for s in self.model.lstm_sizes]
 
                 for i in range(0, train_frames_count, self.time_steps):
@@ -190,8 +185,7 @@ class Trainer():
                         time_steps=self.time_steps
                     )
 
-                    # _, ps_l, sq_l, train_summary, lr, det_actions, global_step_evald, *init_states = sess.run(
-                    _, ps_l, sq_l, c_dist, lr, det_actions, global_step_evald, *init_states = sess.run(
+                    _, ps_l, train_sq_l, c_dist, lr, det_actions, global_step_evald, *init_states = sess.run(
                         [
                             self.optimize_step,
                             self.pseudo_loss,
@@ -207,34 +201,27 @@ class Trainer():
                             self.model.frames_ph: train_frames_chunk,
                             self.gt_annots_ph: train_annots_chunk,
                             self.model.input_annot_ph: train_input_annot_chunk,
-                            self.epoch: self.dataset.epoch,
-                            # self.epoch: j,
+                            self.epoch: 397+self.dataset.epoch,
                             },
                             **dict(zip(self.model.init_state_placeholders, init_states))
                         }
                     )
 
-                    chunk_loss += sq_l
+                    train_chunk_loss += train_sq_l
                     # self.train_writer.add_summary(train_summary, global_step=global_step_evald)
 
 
 
                 print()
-                loss = chunk_loss/((train_true_video_len // self.time_steps) + 1)
-                print("lr:", lr, " loss:", loss)
+                train_sq_loss = train_chunk_loss/train_true_video_len
+                print("lr:", lr, " sq_loss:", train_sq_loss)
                 print()
-
-                # if (loss) < 0.002:
-                #     self.dataset.animate(train_frames_chunk, det_actions)
-                #     exit()
-                # print("Train loss:", loss, " lr:", lr)
-
 
                 if j % 10 == 0:
 
                     # checkpoint
                     print("saving")
-                    print(self.checkpoint_dir+self.experiment_name)
+                    print(self.checkpoint_dir+"/", self.experiment_name)
                     self.saver.save(sess, self.checkpoint_dir+"/"+self.experiment_name, global_step=self.global_step)
 
                     test_frames, test_annots = self.dataset.get_next_video_frames_and_annots(test=True)
@@ -245,7 +232,7 @@ class Trainer():
 
                     test_frames_count = len(test_frames)
                     test_true_video_len = test_frames_count
-                    chunk_loss = 0
+                    test_chunk_loss = 0
                     init_states = [np.zeros([2, 1, s]) for s in self.model.lstm_sizes]
 
                     for i in range(0, test_frames_count, self.time_steps):
@@ -259,7 +246,7 @@ class Trainer():
                         test_frames_chunk, test_annots_chunk, test_input_annot_chunk, test_padd_size = self.dataset.pad_video(
                             frames=test_frames_chunk, annots=test_annots_chunk, input_annot=test_input_annot_chunk, time_steps=self.time_steps)
 
-                        ps_l, sq_l, c_dist, test_summary, lr, det_actions, global_step_evald, *init_states = sess.run(
+                        ps_l, test_sq_l, c_dist, test_summary, lr, det_actions, global_step_evald, *init_states = sess.run(
                             [
                                 self.pseudo_loss,
                                 self.sq_loss,
@@ -271,7 +258,7 @@ class Trainer():
                             ]+list(self.model.last_states),
                             feed_dict={
                                 **{
-                                    self.epoch: self.dataset.epoch,
+                                    self.epoch: 397+self.dataset.epoch,
                                     self.model.frames_ph: test_frames_chunk,
                                     self.model.input_annot_ph: test_input_annot_chunk,
                                     self.gt_annots_ph: test_annots_chunk
@@ -280,10 +267,15 @@ class Trainer():
                             }
                         )
 
-                        chunk_loss += sq_l
+                        if i == ((test_frames_count//self.time_steps)-1)*self.time_steps:
+                            # add summaries in the second to last feed
+                            # because the batch length is fixed and there is no padding and is in eval faze
 
-                    test_loss = chunk_loss/(test_true_video_len)
-                    self.test_writer.add_summary(test_summary, global_step=global_step_evald)
+                            self.test_writer.add_summary(test_summary, global_step=global_step_evald)
+
+                        test_chunk_loss += test_sq_l
+
+                    test_loss = test_chunk_loss/test_true_video_len
 
                     print()
                     print("Test loss:", test_loss)
@@ -307,7 +299,7 @@ class Trainer():
                 return rews
 
 
-            rews = tf.cond(self.epoch < 100, lambda: distance_rewards(sampled_actions, annots), lambda: IOU_rewards(sampled_actions, annots))
+            rews = tf.cond(self.epoch < ADVANTAGE_CHANGE_EPOCH, lambda: distance_rewards(sampled_actions, annots), lambda: IOU_rewards(sampled_actions, annots))
 
             # dr = distance_rewards(sampled_actions, annots)
             # tf.summary.scalar("Dist_rews_mean", tf.reduce_mean(dr))
